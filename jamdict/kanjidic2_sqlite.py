@@ -1,16 +1,41 @@
 # -*- coding: utf-8 -*-
 
-"""
+# from utils.timing import timing
+# from copy import deepcopy
+
+'''
 KanjiDic2 in SQLite format
+Latest version can be found at https://github.com/neocl/jamdict
 
 References:
     KANJIDIC2 project
-        https://www.edrdg.org/wiki/index.php/KANJIDIC_Project
-"""
+        https://www.edrdg.org/wiki/index.php/KANJIDIC_Project 
 
-# This code is a part of jamdict library: https://github.com/neocl/jamdict
-# :copyright: (c) 2017 Le Tuan Anh <tuananh.ke@gmail.com>
-# :license: MIT, see LICENSE for more details.
+@author: Le Tuan Anh <tuananh.ke@gmail.com>
+@license: MIT
+'''
+
+# Copyright (c) 2017, Le Tuan Anh <tuananh.ke@gmail.com>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+########################################################################
 
 import os
 import logging
@@ -61,8 +86,8 @@ class KanjiDic2Schema(Schema):
     KEY_DB_VER = 'kanjidic2.database_version'
     KEY_CREATED_DATE = 'kanjidic2.date_of_creation'
 
-    def __init__(self, db_path, *args, **kwargs):
-        super().__init__(db_path, *args, **kwargs)
+    def __init__(self, data_source, setup_script=None, setup_file=None, *args, **kwargs):
+        super().__init__(data_source, setup_script=setup_script, setup_file=setup_file, *args, **kwargs)
         self.add_file(KANJIDIC2_SETUP_FILE)
         self.add_script(KANJIDIC2_SETUP_SCRIPT)
         # Meta
@@ -83,14 +108,17 @@ class KanjiDic2Schema(Schema):
 
 class KanjiDic2SQLite(KanjiDic2Schema):
 
-    def __init__(self, db_path, *args, **kwargs):
-        super().__init__(db_path, *args, **kwargs)
+    def __init__(self, db_path, setup_script=None, setup_file=None, *args, **kwargs):
 
-    def update_kd2_meta(self, file_version, database_version, date_of_creation, ctx=None):
+        print('db_path', db_path)
+
+        super().__init__(db_path, setup_script=setup_script, setup_file=setup_file, *args, **kwargs)
+
+    def update_meta(self, file_version, database_version, date_of_creation, ctx=None):
         # ensure context
         if ctx is None:
             with self.ctx() as new_context:
-                return self.update_kd2_meta(file_version, database_version, date_of_creation, new_context)
+                return self.update_meta(file_version, database_version, date_of_creation, new_context)
         # else
         # file_version
         fv = ctx.meta.by_id(self.KEY_FILE_VER)
@@ -172,14 +200,52 @@ class KanjiDic2SQLite(KanjiDic2Schema):
                 m.gid = rmg.ID
                 ctx.meaning.save(m)
 
-    def search_chars_iter(self, chars, ctx=None):
-        if ctx is None:
-            with self.ctx() as ctx:
-                return self.search_chars_iter(chars, ctx=ctx)
-        for c in chars:
-            res = self.get_char(c, ctx=ctx)
-            if res is not None:
-                yield res
+    def is_char(self, literal, ctx):
+        """
+        TableContext
+        columns=('rm_groups', 'reading', 'meaning'
+        """
+
+        c = ctx.char.select_single('literal=?', (literal,))
+        # print('C!', c)
+        return c
+
+    # @timing
+    def quick_get_char_without_meanings(self, literal, ctx):
+
+        # print(ctx)
+
+        c = ctx.char.select_single('literal=?', (literal,))
+        # c.radicals = ctx.radical.select('cid=?', (cid,))
+        return c, ctx
+
+    def quick_get_char(self, literal, ctx):
+        c, ctx = self.quick_get_char_without_meanings(literal, ctx)
+        # c.radicals = ctx.radical.select('cid=?', (cid,))
+        if c:
+            # pass
+            self.add_meanings(c, ctx)
+        return c
+
+    # @timing
+    def add_meanings(self, c, ctx):
+        c.rm_groups = ctx.rmg.select('cid=?', (c.ID,))
+        # print('ok')
+        for i, rmg in enumerate(c.rm_groups):
+
+            rmg.readings = ctx.reading.select('gid=?', (rmg.ID,))
+            rmg.meanings = ctx.meaning.select('gid=?', (rmg.ID,))
+            #
+            # print('---{}----'.format(i))
+            # print('READINGS', rmg.readings)
+            # print('MEANING', rmg.meanings)
+            # print('-------')
+
+
+    def get_rm_group(self, c):
+        if not c.rm_groups:
+            c.rm_groups = self.context.rmg.select('cid=?', (c.ID,))
+
 
     def get_char(self, literal, ctx=None):
         if ctx is None:
